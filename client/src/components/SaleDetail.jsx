@@ -75,8 +75,10 @@ export default function SaleDetail({ id, onClose }) {
         <div className="flex justify-end text-sm mt-6">
           <div className="w-72 space-y-2.5 bg-surface-800/40 p-4 rounded-xl border border-surface-700/50">
             <div className="flex justify-between text-surface-200 font-medium"><span className="uppercase tracking-wide text-xs mt-0.5 text-surface-400">Subtotal:</span> <span className="font-mono text-white">{fmtCurrency(data.subtotal)}</span></div>
-            <div className="flex justify-between text-surface-200 font-medium"><span className="uppercase tracking-wide text-xs mt-0.5 text-surface-400">VAT:</span> <span className="font-mono text-white">{fmtCurrency(data.vat_amount)}</span></div>
             <div className="flex justify-between text-surface-200 font-medium"><span className="uppercase tracking-wide text-xs mt-0.5 text-surface-400">Discount:</span> <span className="font-mono text-white">{fmtCurrency(data.discount)}</span></div>
+            {parseFloat(data.delivery_charge) > 0 && (
+              <div className="flex justify-between text-surface-200 font-medium"><span className="uppercase tracking-wide text-xs mt-0.5 text-surface-400">Delivery Charge:</span> <span className="font-mono text-white">{fmtCurrency(data.delivery_charge)}</span></div>
+            )}
             <div className="section-divider my-3 border-surface-600" />
             <div className="flex justify-between text-white font-bold text-lg items-center"><span className="uppercase tracking-wide text-xs text-surface-300">Grand Total:</span> <span className="font-mono text-emerald-400">{fmtCurrency(data.grand_total)}</span></div>
             {data.is_preorder && (

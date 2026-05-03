@@ -1,13 +1,14 @@
 import React, { useState, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { api, fmtCurrency, fmtDateTime, statusBadge, statusLabel } from '../utils/api';
 import { TrendingUp, Package, AlertTriangle, Users, Bot, RefreshCw, ShoppingBag, Layers, Printer } from 'lucide-react';
 import AIPanel from '../components/AIPanel';
 import SaleDetail from '../components/SaleDetail';
 import toast from 'react-hot-toast';
 
-function StatCard({ title, value, icon: Icon, color, sub }) {
+function StatCard({ title, value, icon: Icon, color, sub, onClick }) {
   return (
-    <div className="stat-card animate-fade-in">
+    <div className={`stat-card animate-fade-in ${onClick ? 'cursor-pointer hover:border-surface-600 transition-colors' : ''}`} onClick={onClick}>
       <div className="flex items-start justify-between">
         <div className={`p-2.5 rounded-xl ${color}`}>
           <Icon className="w-5 h-5" />
@@ -21,6 +22,7 @@ function StatCard({ title, value, icon: Icon, color, sub }) {
 }
 
 export default function Dashboard() {
+  const navigate = useNavigate();
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [showAI, setShowAI] = useState(true);
@@ -68,12 +70,12 @@ export default function Dashboard() {
 
         {/* Stat cards */}
         <div className="grid grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-4">
-          <StatCard title="Today's Sales" value={fmtCurrency(data?.today_sales)} icon={TrendingUp} color="bg-emerald-500/10 text-emerald-400" sub={`${data?.today_transaction_count || 0} transactions`} />
-          <StatCard title="Advance Held" value={fmtCurrency(data?.preorder_advance_held)} icon={ShoppingBag} color="bg-brand-500/10 text-brand-400" sub="Open preorders" />
-          <StatCard title="Due to Collect" value={fmtCurrency(data?.preorder_due_balance)} icon={TrendingUp} color="bg-amber-500/10 text-amber-400" sub="On delivery" />
-          <StatCard title="Low Stock" value={data?.low_stock_count || 0} icon={Package} color="bg-orange-500/10 text-orange-400" sub="Items below threshold" />
-          <StatCard title="Overdue Credit" value={data?.overdue_customers || 0} icon={Users} color="bg-red-500/10 text-red-400" sub="Customers with balance" />
-          <StatCard title="Active Group Buys" value={data?.active_group_buys || 0} icon={Layers} color="bg-purple-500/10 text-purple-400" sub="Open group buys" />
+          <StatCard title="Today's Sales" value={fmtCurrency(data?.today_sales)} icon={TrendingUp} color="bg-emerald-500/10 text-emerald-400" sub={`${data?.today_transaction_count || 0} transactions`} onClick={() => navigate(`/reports?type=sales&from=${new Date().toISOString().split('T')[0]}&to=${new Date().toISOString().split('T')[0]}&autoLoad=true`)} />
+          <StatCard title="Advance Held" value={fmtCurrency(data?.preorder_advance_held)} icon={ShoppingBag} color="bg-brand-500/10 text-brand-400" sub="Open preorders" onClick={() => navigate('/preorders')} />
+          <StatCard title="Due to Collect" value={fmtCurrency(data?.preorder_due_balance)} icon={TrendingUp} color="bg-amber-500/10 text-amber-400" sub="On delivery" onClick={() => navigate('/preorders')} />
+          <StatCard title="Low Stock" value={data?.low_stock_count || 0} icon={Package} color="bg-orange-500/10 text-orange-400" sub="Items below threshold" onClick={() => navigate('/inventory?tab=low')} />
+          <StatCard title="Overdue Credit" value={data?.overdue_customers || 0} icon={Users} color="bg-red-500/10 text-red-400" sub="Customers with balance" onClick={() => navigate('/reports?type=customer-outstanding&autoLoad=true')} />
+          <StatCard title="Active Group Buys" value={data?.active_group_buys || 0} icon={Layers} color="bg-purple-500/10 text-purple-400" sub="Open group buys" onClick={() => navigate('/group-buys')} />
         </div>
 
         {/* Tables */}

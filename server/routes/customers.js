@@ -10,9 +10,9 @@ router.get('/', authenticateToken, async (req, res) => {
   try {
     let q = `
       SELECT c.*, 
-        (SELECT id FROM sales s WHERE s.customer_id = c.id ORDER BY created_at DESC LIMIT 1) as last_sale_id,
-        (SELECT invoice_no FROM sales s WHERE s.customer_id = c.id ORDER BY created_at DESC LIMIT 1) as last_invoice_no
-      FROM customers c WHERE 1=1
+        (SELECT id FROM sales s WHERE s.customer_id = c.id AND s.deleted_at IS NULL ORDER BY created_at DESC LIMIT 1) as last_sale_id,
+        (SELECT invoice_no FROM sales s WHERE s.customer_id = c.id AND s.deleted_at IS NULL ORDER BY created_at DESC LIMIT 1) as last_invoice_no
+      FROM customers c WHERE c.deleted_at IS NULL
     `;
     const params = [];
     if (search) {
@@ -31,18 +31,37 @@ router.get('/', authenticateToken, async (req, res) => {
 router.get('/overdue', authenticateToken, async (req, res) => {
   try {
     const result = await pool.query(
-      `SELECT * FROM customers WHERE outstanding_balance > 0 ORDER BY outstanding_balance DESC`
+      `SELECT * FROM customers WHERE outstanding_balance > 0 AND deleted_at IS NULL ORDER BY outstanding_balance DESC`
     );
     res.json(result.rows);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// GET /api/customers/:id/delete-impact
+router.get('/:id/delete-impact', authenticateToken, async (req, res) => {
+  const { id } = req.params;
+  try {
+    const [customer, sales, preorders] = await Promise.all([
+      pool.query('SELECT name, outstanding_balance FROM customers WHERE id = $1', [id]),
+      pool.query('SELECT COUNT(*) as cnt FROM sales WHERE customer_id = $1 AND deleted_at IS NULL', [id]),
+      pool.query('SELECT COUNT(*) as cnt FROM preorders WHERE customer_id = $1 AND status != $2', [id, 'delivered']),
+    ]);
+    if (!customer.rows[0]) return res.status(404).json({ error: 'Customer not found' });
+    res.json({
+      name: customer.rows[0].name,
+      outstandingBalance: parseFloat(customer.rows[0].outstanding_balance || 0),
+      linkedSales: parseInt(sales.rows[0].cnt),
+      linkedPreorders: parseInt(preorders.rows[0].cnt),
+    });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
 // GET /api/customers/:id
 router.get('/:id', authenticateToken, async (req, res) => {
   try {
-    const customer = await pool.query('SELECT * FROM customers WHERE id = $1', [req.params.id]);
+    const customer = await pool.query('SELECT * FROM customers WHERE id = $1 AND deleted_at IS NULL', [req.params.id]);
     if (!customer.rows[0]) return res.status(404).json({ error: 'Customer not found' });
-    const sales = await pool.query('SELECT * FROM sales WHERE customer_id = $1 ORDER BY created_at DESC LIMIT 50', [req.params.id]);
+    const sales = await pool.query('SELECT * FROM sales WHERE customer_id = $1 AND deleted_at IS NULL ORDER BY created_at DESC LIMIT 50', [req.params.id]);
     const preorders = await pool.query('SELECT * FROM preorders WHERE customer_id = $1 ORDER BY created_at DESC LIMIT 20', [req.params.id]);
     res.json({ ...customer.rows[0], sales: sales.rows, preorders: preorders.rows });
   } catch (err) { res.status(500).json({ error: err.message }); }
@@ -67,19 +86,36 @@ router.put('/:id', authenticateToken, async (req, res) => {
   try {
     const result = await pool.query(
       `UPDATE customers SET name=$1, phone=$2, email=$3, address=$4, billing_address=$5, company=$6, type=$7, credit_limit=$8, payment_terms=$9, notes=$10, outstanding_balance=COALESCE($11, outstanding_balance)
-       WHERE id=$12 RETURNING *`,
+       WHERE id=$12 AND deleted_at IS NULL RETURNING *`,
       [name, phone, email, address, billing_address, company, type, credit_limit, payment_terms, notes, outstanding_balance, req.params.id]
     );
     res.json(result.rows[0]);
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// DELETE /api/customers/:id
+// DELETE /api/customers/:id - Soft delete
 router.delete('/:id', authenticateToken, async (req, res) => {
+  const client = await pool.connect();
   try {
-    await pool.query('DELETE FROM customers WHERE id = $1', [req.params.id]);
-    res.json({ success: true });
-  } catch (err) { res.status(500).json({ error: err.message }); }
+    await client.query('BEGIN');
+    const cust = await client.query('SELECT * FROM customers WHERE id = $1 AND deleted_at IS NULL', [req.params.id]);
+    if (!cust.rows[0]) return res.status(404).json({ error: 'Customer not found' });
+
+    await client.query('UPDATE customers SET deleted_at = NOW(), deleted_by = $1 WHERE id = $2', [req.user.id, req.params.id]);
+    await client.query(
+      `INSERT INTO trash_log (table_name, record_id, record_data, deleted_by) VALUES ($1,$2,$3,$4)`,
+      ['customers', req.params.id, JSON.stringify(cust.rows[0]), req.user.id]
+    );
+    await client.query(
+      `INSERT INTO activity_log (user_id, user_name, action, module, record_id) VALUES ($1,$2,$3,$4,$5)`,
+      [req.user.id, req.user.name, `Soft-deleted customer: ${cust.rows[0].name}`, 'Customers', req.params.id]
+    );
+    await client.query('COMMIT');
+    res.json({ success: true, message: 'Customer moved to trash' });
+  } catch (err) {
+    await client.query('ROLLBACK');
+    res.status(500).json({ error: err.message });
+  } finally { client.release(); }
 });
 
 export default router;

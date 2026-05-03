@@ -11,10 +11,11 @@ const POS         = lazy(() => import('./pages/POS'));
 const Preorders   = lazy(() => import('./pages/Preorders'));
 const Inventory   = lazy(() => import('./pages/Inventory'));
 const Customers   = lazy(() => import('./pages/Customers'));
-const Suppliers   = lazy(() => import('./pages/Suppliers'));
 const GroupBuys   = lazy(() => import('./pages/GroupBuys'));
+const Quotations  = lazy(() => import('./pages/Quotations'));
 const Reports     = lazy(() => import('./pages/Reports'));
 const Settings    = lazy(() => import('./pages/Settings'));
+const Trash       = lazy(() => import('./pages/Trash'));
 
 function Loader() {
   return (
@@ -42,10 +43,11 @@ function AppRoutes() {
         <Route path="preorders" element={<Suspense fallback={<Loader />}><Preorders /></Suspense>} />
         <Route path="inventory" element={<Suspense fallback={<Loader />}><Inventory /></Suspense>} />
         <Route path="customers" element={<Suspense fallback={<Loader />}><Customers /></Suspense>} />
-        <Route path="suppliers" element={<Suspense fallback={<Loader />}><Suppliers /></Suspense>} />
         <Route path="group-buys" element={<Suspense fallback={<Loader />}><GroupBuys /></Suspense>} />
+        <Route path="quotations" element={<Suspense fallback={<Loader />}><Quotations /></Suspense>} />
         <Route path="reports" element={<Suspense fallback={<Loader />}><Reports /></Suspense>} />
         <Route path="settings" element={<Suspense fallback={<Loader />}><Settings /></Suspense>} />
+        <Route path="trash" element={<Suspense fallback={<Loader />}><Trash /></Suspense>} />
       </Route>
       <Route path="*" element={<Navigate to="/dashboard" replace />} />
     </Routes>

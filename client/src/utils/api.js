@@ -1,5 +1,6 @@
 // API utility - all requests go through Vite proxy → backend
-const BASE = import.meta.env.VITE_API_URL || '/api';
+export const BASE = import.meta.env.VITE_API_URL || '/api';
+export const FILE_BASE = BASE.replace('/api', '');
 
 function getToken() {
   return localStorage.getItem('i3d_token');
@@ -7,14 +8,15 @@ function getToken() {
 
 async function request(method, path, data = null) {
   const token = getToken();
+  const isFormData = data instanceof FormData;
   const opts = {
     method,
     headers: {
-      'Content-Type': 'application/json',
+      ...(isFormData ? {} : { 'Content-Type': 'application/json' }),
       ...(token ? { Authorization: `Bearer ${token}` } : {})
     }
   };
-  if (data) opts.body = JSON.stringify(data);
+  if (data) opts.body = isFormData ? data : JSON.stringify(data);
   
   const res = await fetch(`${BASE}${path}`, opts);
   if (res.status === 401) {

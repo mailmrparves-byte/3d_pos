@@ -1,6 +1,6 @@
 import express from 'express';
 import pool from '../config/db.js';
-import { authenticateToken } from '../middleware/auth.js';
+import { authenticateToken, requireRole } from '../middleware/auth.js';
 
 const router = express.Router();
 
@@ -27,8 +27,8 @@ router.get('/:category', authenticateToken, async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// PUT /api/settings/:category - Bulk update settings for a category
-router.put('/:category', authenticateToken, async (req, res) => {
+// PUT /api/settings/:category - Bulk update settings for a category (admin only)
+router.put('/:category', authenticateToken, requireRole('admin'), async (req, res) => {
   const settings = req.body;
   const client = await pool.connect();
   try {

@@ -12,28 +12,27 @@ router.get('/sales', authenticateToken, async (req, res) => {
     const overview = await pool.query(`
       SELECT
         COALESCE(SUM(grand_total),0) as total_sales,
-        COALESCE(SUM(vat_amount),0) as total_vat,
         COALESCE(SUM(discount),0) as total_discounts,
-        COALESCE(SUM(grand_total - vat_amount),0) as net_revenue,
+        COALESCE(SUM(grand_total),0) as net_revenue,
         COUNT(*) as transaction_count
-      FROM sales WHERE created_at BETWEEN $1 AND $2 AND is_draft = false`, params);
+      FROM sales WHERE created_at BETWEEN $1 AND $2 AND is_draft = false AND deleted_at IS NULL`, params);
 
     const byCategory = await pool.query(`
       SELECT p.category, COALESCE(SUM(si.line_total),0) as total
       FROM sale_items si
       JOIN sales s ON si.sale_id = s.id
       JOIN products p ON si.product_id = p.id
-      WHERE s.created_at BETWEEN $1 AND $2 AND s.is_draft = false
+      WHERE s.created_at BETWEEN $1 AND $2 AND s.is_draft = false AND s.deleted_at IS NULL
       GROUP BY p.category ORDER BY total DESC`, params);
 
     const byPayment = await pool.query(`
       SELECT payment_method, COALESCE(SUM(grand_total),0) as total, COUNT(*) as count
-      FROM sales WHERE created_at BETWEEN $1 AND $2 AND is_draft = false
+      FROM sales WHERE created_at BETWEEN $1 AND $2 AND is_draft = false AND deleted_at IS NULL
       GROUP BY payment_method ORDER BY total DESC`, params);
 
     const daily = await pool.query(`
       SELECT DATE(created_at) as date, COALESCE(SUM(grand_total),0) as total, COUNT(*) as count
-      FROM sales WHERE created_at BETWEEN $1 AND $2 AND is_draft = false
+      FROM sales WHERE created_at BETWEEN $1 AND $2 AND is_draft = false AND deleted_at IS NULL
       GROUP BY DATE(created_at) ORDER BY date ASC`, params);
 
     res.json({ overview: overview.rows[0], by_category: byCategory.rows, by_payment: byPayment.rows, daily: daily.rows });
@@ -49,11 +48,11 @@ router.get('/inventory-valuation', authenticateToken, async (req, res) => {
         COALESCE(SUM(stock_qty * cost_price),0) as total_cost_value,
         COALESCE(SUM(stock_qty * selling_price),0) as total_selling_value,
         COALESCE(SUM(stock_qty * (selling_price - cost_price)),0) as potential_profit
-      FROM products GROUP BY category ORDER BY total_selling_value DESC`);
+      FROM products WHERE deleted_at IS NULL GROUP BY category ORDER BY total_selling_value DESC`);
     const totals = await pool.query(`
       SELECT COALESCE(SUM(stock_qty * cost_price),0) as grand_cost,
              COALESCE(SUM(stock_qty * selling_price),0) as grand_selling
-      FROM products`);
+      FROM products WHERE deleted_at IS NULL`);
     res.json({ by_category: result.rows, totals: totals.rows[0] });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
@@ -62,6 +61,7 @@ router.get('/inventory-valuation', authenticateToken, async (req, res) => {
 router.get('/slow-moving', authenticateToken, async (req, res) => {
   const { days = 60 } = req.query;
   try {
+    const daysInt = Math.max(1, Math.min(3650, parseInt(days) || 60));
     const result = await pool.query(`
       SELECT p.id, p.sku, p.name, p.brand, p.category, p.stock_qty, p.selling_price,
         p.stock_qty * p.cost_price as stock_value,
@@ -69,10 +69,11 @@ router.get('/slow-moving', authenticateToken, async (req, res) => {
         COALESCE(SUM(si.quantity),0) as total_sold
       FROM products p
       LEFT JOIN sale_items si ON si.product_id = p.id
-      LEFT JOIN sales s ON si.sale_id = s.id AND s.created_at >= NOW() - INTERVAL '${parseInt(days)} days'
+      LEFT JOIN sales s ON si.sale_id = s.id AND s.created_at >= NOW() - ($1 || ' days')::INTERVAL AND s.deleted_at IS NULL
+      WHERE p.deleted_at IS NULL
       GROUP BY p.id
       HAVING COALESCE(SUM(si.quantity),0) = 0 AND p.stock_qty > 0
-      ORDER BY p.stock_qty * p.cost_price DESC`);
+      ORDER BY p.stock_qty * p.cost_price DESC`, [daysInt.toString()]);
     res.json(result.rows);
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
@@ -87,23 +88,6 @@ router.get('/customer-outstanding', authenticateToken, async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// GET /api/reports/vat?from=&to=
-router.get('/vat', authenticateToken, async (req, res) => {
-  const { from, to } = req.query;
-  try {
-    const params = [from || '2000-01-01', to ? to + ' 23:59:59' : new Date().toISOString()];
-    const result = await pool.query(`
-      SELECT
-        COALESCE(SUM(grand_total - vat_amount),0) as taxable_value,
-        COALESCE(SUM(vat_amount),0) as total_vat_collected,
-        COALESCE(SUM(grand_total),0) as total_with_vat,
-        COUNT(*) as invoice_count,
-        DATE_TRUNC('month', created_at) as period
-      FROM sales WHERE created_at BETWEEN $1 AND $2 AND is_draft = false
-      GROUP BY period ORDER BY period ASC`, params);
-    res.json(result.rows);
-  } catch (err) { res.status(500).json({ error: err.message }); }
-});
 
 // GET /api/reports/profit-loss?from=&to=
 router.get('/profit-loss', authenticateToken, async (req, res) => {
@@ -118,7 +102,7 @@ router.get('/profit-loss', authenticateToken, async (req, res) => {
       FROM sale_items si
       JOIN sales s ON si.sale_id = s.id
       JOIN products p ON si.product_id = p.id
-      WHERE s.created_at BETWEEN $1 AND $2 AND s.is_draft = false
+      WHERE s.created_at BETWEEN $1 AND $2 AND s.is_draft = false AND s.deleted_at IS NULL
       GROUP BY p.category ORDER BY gross_profit DESC`, params);
 
     const totals = await pool.query(`
@@ -129,7 +113,7 @@ router.get('/profit-loss', authenticateToken, async (req, res) => {
       FROM sale_items si
       JOIN sales s ON si.sale_id = s.id
       JOIN products p ON si.product_id = p.id
-      WHERE s.created_at BETWEEN $1 AND $2 AND s.is_draft = false`, params);
+      WHERE s.created_at BETWEEN $1 AND $2 AND s.is_draft = false AND s.deleted_at IS NULL`, params);
 
     res.json({ by_category: result.rows, totals: totals.rows[0] });
   } catch (err) { res.status(500).json({ error: err.message }); }
@@ -146,12 +130,38 @@ router.get('/preorders', authenticateToken, async (req, res) => {
     if (status) { params.push(status); q += ` AND status = $${params.length}`; }
     q += ` ORDER BY created_at DESC`;
     const result = await pool.query(q, params);
-    const summary = await pool.query(`
-      SELECT COUNT(*) FILTER(WHERE status != 'delivered') as open,
-             SUM(advance_paid) FILTER(WHERE status != 'delivered') as advance_held,
-             SUM(due_balance) FILTER(WHERE status != 'delivered') as due_to_collect
-      FROM preorders WHERE 1=1 ${from ? `AND created_at >= '${from}'` : ''} ${to ? `AND created_at <= '${to} 23:59:59'` : ''}`);
+    const summaryParams = [];
+    let summaryQ = `SELECT COUNT(*) FILTER(WHERE status != 'delivered') as open,
+             COALESCE(SUM(advance_paid) FILTER(WHERE status != 'delivered'),0) as advance_held,
+             COALESCE(SUM(due_balance) FILTER(WHERE status != 'delivered'),0) as due_to_collect
+      FROM preorders WHERE 1=1`;
+    if (from) { summaryParams.push(from); summaryQ += ` AND created_at >= $${summaryParams.length}`; }
+    if (to) { summaryParams.push(to + ' 23:59:59'); summaryQ += ` AND created_at <= $${summaryParams.length}`; }
+    const summary = await pool.query(summaryQ, summaryParams);
     res.json({ preorders: result.rows, summary: summary.rows[0] });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// GET /api/reports/quotations
+router.get('/quotations', authenticateToken, async (req, res) => {
+  const { from, to } = req.query;
+  try {
+    const params = [from || '2000-01-01', to ? to + ' 23:59:59' : new Date().toISOString()];
+    const summary = await pool.query(`
+      SELECT 
+        COUNT(*) as total,
+        COUNT(*) FILTER (WHERE status = 'converted') as converted,
+        COUNT(*) FILTER (WHERE status = 'cancelled') as cancelled,
+        COUNT(*) FILTER (WHERE status IN ('draft', 'sent', 'accepted')) as pending,
+        COALESCE(SUM(grand_total), 0) as total_value
+      FROM quotations WHERE created_at BETWEEN $1 AND $2 AND deleted_at IS NULL`, params);
+    
+    const list = await pool.query(`
+      SELECT q.*, 
+        CASE WHEN status = 'converted' THEN 1 ELSE 0 END as is_converted
+      FROM quotations q WHERE created_at BETWEEN $1 AND $2 AND deleted_at IS NULL ORDER BY created_at DESC`, params);
+      
+    res.json({ summary: summary.rows[0], list: list.rows });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 

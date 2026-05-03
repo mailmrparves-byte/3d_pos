@@ -199,8 +199,7 @@ export default function InvoiceBuilder({ settings, onChange }) {
                 <div key={blockId} className="flex justify-end">
                   <div className="w-48 space-y-1">
                     <div className="flex justify-between"><span>Subtotal:</span> <span>৳1,000</span></div>
-                    <div className="flex justify-between"><span>VAT (15%):</span> <span>৳150</span></div>
-                    <div className="border-t border-gray-300 my-1 pt-1 flex justify-between font-bold" style={{ color: settings.color_theme || '#1e40af' }}><span>Grand Total:</span> <span>৳1,150</span></div>
+                    <div className="border-t border-gray-300 my-1 pt-1 flex justify-between font-bold" style={{ color: settings.color_theme || '#1e40af' }}><span>Grand Total:</span> <span>৳1,000</span></div>
                   </div>
                 </div>
               );

@@ -6,9 +6,9 @@ import jsPDF from 'jspdf';
 import 'jspdf-autotable';
 import { printHtmlInvoice } from '../utils/printInvoice';
 
-const EMPTY_ITEM = { product_id: null, product_name: '', sku: '', quantity: 1, unit_price: 0, discount_pct: 0, line_total: 0 };
 const PAYMENT_METHODS = ['Cash', 'bKash', 'Nagad', 'Bank Transfer', 'Credit Account'];
 const CUSTOMER_TYPES = ['walk-in', 'corporate', 'returning'];
+const EMPTY_ITEM = { product_id: null, product_name: '', sku: '', quantity: 1, unit_price: 0, discount_pct: 0, line_total: 0, is_group_buy: false };
 
 function calcLine(item) {
   const base = item.quantity * item.unit_price;
@@ -18,6 +18,7 @@ function calcLine(item) {
 
 export default function POS() {
   const [products, setProducts] = useState([]);
+  const [groupBuys, setGroupBuys] = useState([]);
   const [customers, setCustomers] = useState([]);
   const [settings, setSettings] = useState({});
 
@@ -36,6 +37,9 @@ export default function POS() {
   const [variantInstructions, setVariantInstructions] = useState('');
   const [preorderNotes, setPreorderNotes] = useState('');
   const [notes, setNotes] = useState('');
+  const [isGroupBuyMode, setIsGroupBuyMode] = useState(false);
+  const [selectedGroupBuy, setSelectedGroupBuy] = useState(null);
+  const [deliveryCharge, setDeliveryCharge] = useState(0);
   const [saving, setSaving] = useState(false);
 
   // Product search
@@ -49,7 +53,6 @@ export default function POS() {
   const [customerResults, setCustomerResults] = useState([]);
   const [showCustomerDropdown, setShowCustomerDropdown] = useState(false);
 
-  const VAT_RATE = parseFloat(settings?.tax?.vat_rate || 15) / 100;
   const MIN_ADVANCE_PCT = parseFloat(settings?.payment?.min_advance_pct || 20);
   const MIN_ADVANCE_PCT_HIGH = parseFloat(settings?.payment?.min_advance_pct_high || 25);
   const HIGH_VALUE = parseFloat(settings?.payment?.high_value_threshold || 100000);
@@ -59,10 +62,12 @@ export default function POS() {
       api.get('/products?limit=500'),
       api.get('/customers?limit=300'),
       api.get('/settings'),
-    ]).then(([p, c, s]) => {
+      api.get('/group-buys'),
+    ]).then(([p, c, s, gb]) => {
       setProducts(p);
       setCustomers(c);
       setSettings(s);
+      setGroupBuys(gb.filter(x => x.status === 'open'));
     }).catch(() => toast.error('Failed to load POS data'));
   }, []);
 
@@ -70,8 +75,7 @@ export default function POS() {
 
   // Calculated totals
   const subtotal = items.reduce((s, i) => s + calcLine(i), 0);
-  const vatAmount = parseFloat((subtotal * VAT_RATE).toFixed(2));
-  const grandTotal = parseFloat((subtotal + vatAmount).toFixed(2));
+  const grandTotal = parseFloat((subtotal + (parseFloat(deliveryCharge) || 0)).toFixed(2));
   const totalPaid = parseFloat(payments.reduce((s, p) => s + (parseFloat(p.amount) || 0), 0).toFixed(2));
   const changeDue = Math.max(0, totalPaid - grandTotal);
   const dueBalance = Math.max(0, grandTotal - totalPaid);
@@ -89,12 +93,21 @@ export default function POS() {
     setActiveSearchIdx(idx);
     setSearchQ(q);
     if (q.length > 1) {
-      const results = products.filter(p =>
-        p.name.toLowerCase().includes(q.toLowerCase()) || 
-        p.sku.toLowerCase().includes(q.toLowerCase()) ||
-        (p.category && p.category.toLowerCase().includes(q.toLowerCase()))
-      ).slice(0, 8);
-      setSearchResults(results);
+      if (isGroupBuyMode && selectedGroupBuy) {
+        // Filter from selected group buy products
+        const gb = groupBuys.find(g => g.id === selectedGroupBuy);
+        const filtered = (gb?.products || []).filter(p => 
+          p.product_name.toLowerCase().includes(q.toLowerCase())
+        );
+        setSearchResults(filtered.map(p => ({ ...p, name: p.product_name, selling_price: p.target_price, id: p.product_id })));
+      } else {
+        const results = products.filter(p =>
+          p.name.toLowerCase().includes(q.toLowerCase()) || 
+          p.sku.toLowerCase().includes(q.toLowerCase()) ||
+          (p.category && p.category.toLowerCase().includes(q.toLowerCase()))
+        ).slice(0, 8);
+        setSearchResults(results);
+      }
     } else {
       setSearchResults([]);
     }
@@ -125,7 +138,15 @@ export default function POS() {
 
   const selectProduct = (idx, product) => {
     const updated = [...items];
-    updated[idx] = { ...updated[idx], product_id: product.id, product_name: product.name, sku: product.sku, unit_price: parseFloat(product.selling_price), line_total: calcLine({ ...updated[idx], unit_price: parseFloat(product.selling_price) }) };
+    updated[idx] = { 
+      ...updated[idx], 
+      product_id: product.id, 
+      product_name: product.name, 
+      sku: product.sku || '', 
+      unit_price: parseFloat(product.selling_price), 
+      is_group_buy: isGroupBuyMode,
+      line_total: calcLine({ ...updated[idx], unit_price: parseFloat(product.selling_price) }) 
+    };
     setItems(updated);
     setSearchResults([]);
     setActiveSearchIdx(null);
@@ -156,11 +177,11 @@ export default function POS() {
     setPayments([{ method: 'Cash', amount: 0 }]);
     setIsPreorder(false); setAdvancePaid(0);
     setDeliveryDate(''); setVariantInstructions(''); setPreorderNotes(''); setNotes('');
+    setIsGroupBuyMode(false); setSelectedGroupBuy(null); setDeliveryCharge(0);
   };
 
-  const confirmSale = async (isDraft = false) => {
+  const saveAsQuotation = async () => {
     if (!items[0].product_id) return toast.error('Add at least one product');
-    if (advanceWarning && !isDraft) return toast.error(`Advance must be at least ${fmtCurrency(minAdvance)}`);
     setSaving(true);
     try {
       const payload = {
@@ -171,24 +192,50 @@ export default function POS() {
         customer_type: customerType,
         corporate_po: corporatePO,
         items: items.filter(i => i.product_id).map(i => ({ ...i, line_total: calcLine(i) })),
-        subtotal, vat_amount: vatAmount, discount: 0, grand_total: grandTotal,
+        subtotal, discount: 0, delivery_charge: parseFloat(deliveryCharge) || 0, grand_total: grandTotal,
+        notes,
+        status: 'draft'
+      };
+      await api.post('/quotations', payload);
+      toast.success('Saved as Quotation');
+      clearForm();
+    } catch (err) {
+      toast.error(err.message || 'Failed to save quotation');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const confirmSale = async () => {
+    if (!items[0].product_id) return toast.error('Add at least one product');
+    if (advanceWarning) return toast.error(`Advance must be at least ${fmtCurrency(minAdvance)}`);
+    setSaving(true);
+    try {
+      const payload = {
+        customer_id: selectedCustomer?.id || null,
+        customer_name: customerName || 'Walk-in',
+        customer_phone: customerPhone,
+        customer_address: customerAddress,
+        customer_type: customerType,
+        corporate_po: corporatePO,
+        items: items.filter(i => i.product_id).map(i => ({ ...i, line_total: calcLine(i) })),
+        subtotal, discount: 0, delivery_charge: parseFloat(deliveryCharge) || 0, grand_total: grandTotal,
         payment_method: payments.map(p => p.method).join(', '), 
         amount_received: totalPaid,
         payments,
         change_due: changeDue,
         status: isPreorder ? 'preorder' : (totalPaid >= grandTotal ? 'paid' : 'partial'),
         is_preorder: isPreorder,
-        is_draft: isDraft,
+        is_draft: false,
         notes,
+        group_buy_id: isGroupBuyMode ? selectedGroupBuy : null,
         preorder: isPreorder ? { advance_paid: totalPaid, due_balance: dueBalance, delivery_date: deliveryDate, variant_instructions: variantInstructions, notes: preorderNotes } : null
       };
       const result = await api.post('/sales', payload);
-      toast.success(isDraft ? 'Saved as draft' : `Sale ${result.invoice_no} confirmed!`);
-      if (!isDraft) {
-        // Ensure result has items for the print engine
-        printInvoice({ ...result, items: payload.items }, payload);
-        clearForm();
-      }
+      toast.success(`Sale ${result.invoice_no} confirmed!`);
+      // Ensure result has items for the print engine
+      printInvoice({ ...result, items: payload.items }, payload);
+      clearForm();
     } catch (err) {
       toast.error(err.message || 'Failed to save sale');
     } finally {
@@ -216,6 +263,52 @@ export default function POS() {
       <div className="grid grid-cols-1 xl:grid-cols-3 gap-5">
         {/* Left: Customer + Products */}
         <div className="xl:col-span-2 space-y-4">
+          {/* Group Buy Toggle */}
+          <div className="form-section">
+            <div className="flex items-center justify-between">
+              <div>
+                <div className="text-sm font-semibold text-surface-200">Group Buy Invoice</div>
+                <div className="text-xs text-surface-500">Sell products at group buy rates</div>
+              </div>
+              <div className="flex items-center gap-3">
+                {isGroupBuyMode && (
+                  <select 
+                    className="input-field !py-1.5 !text-xs min-w-[200px]" 
+                    value={selectedGroupBuy || ''} 
+                    onChange={e => {
+                      const gbId = parseInt(e.target.value);
+                      setSelectedGroupBuy(gbId);
+                      const gb = groupBuys.find(g => g.id === gbId);
+                      if (gb && gb.products) {
+                        const autoItems = gb.products.map(p => ({
+                          product_id: p.product_id,
+                          product_name: p.product_name,
+                          sku: p.sku || '',
+                          quantity: p.quantity || 1,
+                          unit_price: parseFloat(p.target_price),
+                          discount_pct: 0,
+                          is_group_buy: true,
+                          line_total: parseFloat(p.target_price) * (p.quantity || 1)
+                        }));
+                        setItems(autoItems);
+                        toast.success(`Loaded ${autoItems.length} products from ${gb.product_name}`);
+                      } else {
+                        setItems([{ ...EMPTY_ITEM, is_group_buy: true }]);
+                      }
+                    }}
+                  >
+                    <option value="" disabled className="bg-surface-800">Select Group Buy Event</option>
+                    {groupBuys.map(gb => <option key={gb.id} value={gb.id} className="bg-surface-800">{gb.product_name}</option>)}
+                  </select>
+                )}
+                <button onClick={() => { setIsGroupBuyMode(!isGroupBuyMode); setSelectedGroupBuy(null); setItems([{ ...EMPTY_ITEM, is_group_buy: !isGroupBuyMode }]); }} className={`flex items-center gap-2 px-3 py-1.5 rounded-xl text-sm transition-colors ${isGroupBuyMode ? 'bg-emerald-600/20 text-emerald-400 border border-emerald-600/30' : 'bg-surface-800 text-surface-400'}`}>
+                  {isGroupBuyMode ? <ToggleRight className="w-5 h-5" /> : <ToggleLeft className="w-5 h-5" />}
+                  {isGroupBuyMode ? 'Group Buy ON' : 'Group Buy OFF'}
+                </button>
+              </div>
+            </div>
+          </div>
+
           {/* Customer */}
           <div className="form-section">
             <div className="form-section-title">Customer Details</div>
@@ -371,7 +464,7 @@ export default function POS() {
             <div className="form-section-title">Order Summary</div>
             <div className="space-y-2">
               <div className="flex justify-between text-sm items-center"><span className="text-surface-400 whitespace-nowrap">Subtotal</span><span className="font-mono truncate ml-2" title={fmtCurrency(subtotal)}>{fmtCurrency(subtotal)}</span></div>
-              <div className="flex justify-between text-sm items-center"><span className="text-surface-400 whitespace-nowrap">VAT ({(VAT_RATE*100).toFixed(0)}%)</span><span className="font-mono truncate ml-2" title={fmtCurrency(vatAmount)}>{fmtCurrency(vatAmount)}</span></div>
+              <div className="flex justify-between text-sm items-center"><span className="text-surface-400 whitespace-nowrap">Delivery Charge</span><input type="number" className="input-field !py-0.5 !px-1.5 !w-24 text-right !bg-surface-900" value={deliveryCharge} onChange={e => setDeliveryCharge(parseFloat(e.target.value) || 0)} /></div>
               <div className="section-divider" />
               <div className="flex justify-between text-lg font-bold items-center"><span className="whitespace-nowrap">Grand Total</span><span className="amount truncate ml-2" title={fmtCurrency(grandTotal)}>{fmtCurrency(grandTotal)}</span></div>
               {isPreorder && (
@@ -471,11 +564,11 @@ export default function POS() {
 
           {/* Actions */}
           <div className="space-y-2">
-            <button id="pos-confirm-sale" onClick={() => confirmSale(false)} disabled={saving} className="btn-primary w-full justify-center btn-lg">
+            <button id="pos-confirm-sale" onClick={confirmSale} disabled={saving} className="btn-primary w-full justify-center btn-lg">
               <Printer className="w-4 h-4" /> Confirm Sale & Print Invoice
             </button>
-            <button onClick={() => confirmSale(true)} disabled={saving} className="btn-secondary w-full justify-center">
-              <Save className="w-4 h-4" /> Save as Draft
+            <button onClick={saveAsQuotation} disabled={saving} className="btn-secondary w-full justify-center">
+              <Save className="w-4 h-4" /> Save as Quotation
             </button>
             <button onClick={clearForm} className="btn-ghost w-full justify-center"><X className="w-4 h-4" /> Clear Form</button>
           </div>

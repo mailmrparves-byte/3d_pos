@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { api, fmtCurrency, fmtDate, statusBadge } from '../utils/api';
 import { Plus, Edit2, Trash2, Search, Eye, X, Save } from 'lucide-react';
 import SaleDetail from '../components/SaleDetail';
+import DeleteConfirmModal from '../components/DeleteConfirmModal';
 import toast from 'react-hot-toast';
 
 const emptyCustomer = { name: '', phone: '', email: '', address: '', billing_address: '', company: '', type: 'walk-in', credit_limit: 0, payment_terms: 'Net 15', notes: '' };
@@ -119,6 +120,7 @@ export default function Customers() {
   const [editCustomer, setEditCustomer] = useState(null);
   const [viewId, setViewId] = useState(null);
   const [viewInvoiceId, setViewInvoiceId] = useState(null);
+  const [deleteTarget, setDeleteTarget] = useState(null);
 
   const load = async () => {
     try {
@@ -131,9 +133,8 @@ export default function Customers() {
 
   useEffect(() => { load(); }, [search]);
 
-  const deleteCustomer = async (id) => {
-    if (!confirm('Delete this customer?')) return;
-    try { await api.delete(`/customers/${id}`); toast.success('Deleted'); load(); }
+  const deleteCustomer = async (customer) => {
+    try { await api.delete(`/customers/${customer.id}`); toast.success('Moved to trash'); setDeleteTarget(null); load(); }
     catch (err) { toast.error(err.message); }
   };
 
@@ -181,7 +182,7 @@ export default function Customers() {
                   <div className="flex gap-1">
                     <button onClick={() => setViewId(c.id)} className="btn-ghost btn-icon btn-sm"><Eye className="w-3.5 h-3.5" /></button>
                     <button onClick={() => { setEditCustomer(c); setShowForm(true); }} className="btn-ghost btn-icon btn-sm"><Edit2 className="w-3.5 h-3.5" /></button>
-                    <button onClick={() => deleteCustomer(c.id)} className="btn-danger btn-icon btn-sm"><Trash2 className="w-3.5 h-3.5" /></button>
+                    <button onClick={() => setDeleteTarget(c)} className="btn-danger btn-icon btn-sm"><Trash2 className="w-3.5 h-3.5" /></button>
                   </div>
                 </td>
               </tr>
@@ -194,6 +195,7 @@ export default function Customers() {
       {showForm && <CustomerForm customer={editCustomer} onSave={() => { setShowForm(false); load(); }} onClose={() => setShowForm(false)} />}
       {viewId && <CustomerDetail id={viewId} onClose={() => setViewId(null)} />}
       {viewInvoiceId && <SaleDetail id={viewInvoiceId} onClose={() => setViewInvoiceId(null)} />}
+      {deleteTarget && <DeleteConfirmModal type="customer" id={deleteTarget.id} name={deleteTarget.name} onConfirm={() => deleteCustomer(deleteTarget)} onClose={() => setDeleteTarget(null)} />}
     </div>
   );
 }

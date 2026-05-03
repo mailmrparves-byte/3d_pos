@@ -1,6 +1,7 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { api, fmtCurrency, fmtDate } from '../utils/api';
-import { BarChart3, Download, Bot, Calendar, RefreshCw, TrendingUp, Package, Users, AlertTriangle } from 'lucide-react';
+import { BarChart3, Download, Bot, Calendar, RefreshCw, TrendingUp, Package, Users, AlertTriangle, FileText } from 'lucide-react';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts';
 import { api as apiUtil } from '../utils/api';
 import toast from 'react-hot-toast';
@@ -11,10 +12,10 @@ const REPORT_TYPES = [
   { id: 'sales', label: 'Sales Report', icon: TrendingUp },
   { id: 'inventory', label: 'Inventory Valuation', icon: Package },
   { id: 'slow-moving', label: 'Slow Moving Stock', icon: AlertTriangle },
-  { id: 'vat', label: 'VAT Report', icon: BarChart3 },
   { id: 'profit-loss', label: 'Profit & Loss', icon: TrendingUp },
   { id: 'customer-outstanding', label: 'Outstanding Balances', icon: Users },
   { id: 'preorders', label: 'Preorder Report', icon: Package },
+  { id: 'quotations', label: 'Quotation Analysis', icon: FileText },
 ];
 
 function SalesReport({ data }) {
@@ -25,7 +26,6 @@ function SalesReport({ data }) {
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
         {[
           { l: 'Total Sales', v: fmtCurrency(overview?.total_sales), c: 'text-emerald-400' },
-          { l: 'Total VAT', v: fmtCurrency(overview?.total_vat), c: 'text-brand-400' },
           { l: 'Net Revenue', v: fmtCurrency(overview?.net_revenue), c: 'text-purple-400' },
           { l: 'Transactions', v: overview?.transaction_count, c: 'text-amber-400' },
         ].map(s => (
@@ -94,11 +94,19 @@ function TableReport({ data, columns }) {
 }
 
 export default function Reports() {
-  const [reportType, setReportType] = useState('sales');
-  const [from, setFrom] = useState(() => { const d = new Date(); d.setDate(1); return d.toISOString().split('T')[0]; });
-  const [to, setTo] = useState(() => new Date().toISOString().split('T')[0]);
+  const [searchParams, setSearchParams] = useSearchParams();
+  const [reportType, setReportType] = useState(searchParams.get('type') || 'sales');
+  const [from, setFrom] = useState(() => searchParams.get('from') || (() => { const d = new Date(); d.setDate(1); return d.toISOString().split('T')[0]; })());
+  const [to, setTo] = useState(() => searchParams.get('to') || new Date().toISOString().split('T')[0]);
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(false);
+
+  // Sync state back to URL for shareability (optional, but good practice)
+  const handleSetReportType = (type) => {
+    setReportType(type);
+    searchParams.set('type', type);
+    setSearchParams(searchParams);
+  };
 
   const loadReport = async () => {
     setLoading(true); setData(null);
@@ -107,14 +115,20 @@ export default function Reports() {
       if (reportType === 'sales') result = await api.get(`/reports/sales?from=${from}&to=${to}`);
       else if (reportType === 'inventory') result = await api.get('/reports/inventory-valuation');
       else if (reportType === 'slow-moving') result = await api.get('/reports/slow-moving?days=60');
-      else if (reportType === 'vat') result = await api.get(`/reports/vat?from=${from}&to=${to}`);
       else if (reportType === 'profit-loss') result = await api.get(`/reports/profit-loss?from=${from}&to=${to}`);
       else if (reportType === 'customer-outstanding') result = await api.get('/reports/customer-outstanding');
       else if (reportType === 'preorders') result = await api.get(`/reports/preorders?from=${from}&to=${to}`);
+      else if (reportType === 'quotations') result = await api.get(`/reports/quotations?from=${from}&to=${to}`);
       setData(result);
     } catch (err) { toast.error(err.message); }
     finally { setLoading(false); }
   };
+
+  useEffect(() => {
+    if (searchParams.get('autoLoad') === 'true') {
+      loadReport();
+    }
+  }, []); // Run once on mount if autoLoad is present
 
   const renderReport = () => {
     if (loading) return <div className="space-y-3">{Array(5).fill(0).map((_, i) => <div key={i} className="neo-card h-20 shimmer" />)}</div>;
@@ -142,15 +156,6 @@ export default function Reports() {
         { key: 'category', label: 'Category' }, { key: 'stock_qty', label: 'Stock' },
         { key: 'stock_value', label: 'Stock Value', format: fmtCurrency },
         { key: 'last_sale_date', label: 'Last Sold', format: fmtDate },
-      ]} />
-    );
-    if (reportType === 'vat') return (
-      <TableReport data={data} columns={[
-        { key: 'period', label: 'Period', format: v => v ? new Date(v).toLocaleDateString('en-GB', { month: 'long', year: 'numeric' }) : '—' },
-        { key: 'taxable_value', label: 'Taxable Value', format: fmtCurrency },
-        { key: 'total_vat_collected', label: 'VAT Collected', format: fmtCurrency },
-        { key: 'total_with_vat', label: 'Total incl VAT', format: fmtCurrency },
-        { key: 'invoice_count', label: 'Invoices' },
       ]} />
     );
     if (reportType === 'profit-loss') return (
@@ -194,6 +199,23 @@ export default function Reports() {
         ]} />
       </div>
     );
+    if (reportType === 'quotations') return (
+      <div className="space-y-4">
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+          <div className="stat-card"><div className="text-xl font-mono font-bold text-white">{data.summary?.total || 0}</div><div className="text-xs text-surface-400">Total Quotations</div></div>
+          <div className="stat-card"><div className="text-xl font-mono font-bold text-emerald-400">{((data.summary?.converted / data.summary?.total) * 100 || 0).toFixed(1)}%</div><div className="text-xs text-surface-400">Conversion Rate</div></div>
+          <div className="stat-card"><div className="text-xl font-mono font-bold text-amber-400">{data.summary?.pending || 0}</div><div className="text-xs text-surface-400">Pending Quotes</div></div>
+          <div className="stat-card"><div className="text-xl font-mono font-bold text-red-400">{data.summary?.cancelled || 0}</div><div className="text-xs text-surface-400">Cancelled</div></div>
+        </div>
+        <TableReport data={data.list} columns={[
+          { key: 'quotation_no', label: 'QT No' },
+          { key: 'customer_name', label: 'Customer' },
+          { key: 'grand_total', label: 'Total', format: fmtCurrency },
+          { key: 'created_at', label: 'Date', format: fmtDate },
+          { key: 'status', label: 'Status' },
+        ]} />
+      </div>
+    );
     return null;
   };
 
@@ -207,7 +229,7 @@ export default function Reports() {
         <div className="flex flex-wrap gap-3 items-end">
           <div className="flex flex-wrap gap-2">
             {REPORT_TYPES.map(r => (
-              <button key={r.id} onClick={() => setReportType(r.id)} className={`btn-sm ${reportType === r.id ? 'btn-primary' : 'btn-secondary'}`}>
+              <button key={r.id} onClick={() => handleSetReportType(r.id)} className={`btn-sm ${reportType === r.id ? 'btn-primary' : 'btn-secondary'}`}>
                 <r.icon className="w-3.5 h-3.5" />{r.label}
               </button>
             ))}

@@ -5,7 +5,7 @@ import { useTheme } from '../context/ThemeContext';
 import {
   LayoutDashboard, ShoppingCart, Package, Users, Truck,
   BarChart3, Settings, LogOut, Menu, X, ShoppingBag,
-  Users2, Layers, Bell, Zap, Sun, Moon, ChevronRight
+  Users2, Layers, Bell, Zap, Sun, Moon, ChevronRight, Trash2, FileText
 } from 'lucide-react';
 
 const navItems = [
@@ -14,10 +14,11 @@ const navItems = [
   { to: '/preorders',  icon: ShoppingBag,     label: 'Preorders' },
   { to: '/inventory',  icon: Package,         label: 'Inventory' },
   { to: '/customers',  icon: Users,           label: 'Customers' },
-  { to: '/suppliers',  icon: Truck,           label: 'Suppliers & POs' },
   { to: '/group-buys', icon: Users2,          label: 'Group Buys' },
+  { to: '/quotations', icon: FileText,       label: 'Quotations' },
   { to: '/reports',    icon: BarChart3,       label: 'Reports' },
   { to: '/settings',   icon: Settings,        label: 'Settings' },
+  { to: '/trash',      icon: Trash2,          label: 'Trash Bin' },
 ];
 
 const roleColors = {

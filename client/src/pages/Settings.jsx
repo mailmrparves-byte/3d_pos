@@ -1,17 +1,20 @@
 import React, { useState, useEffect } from 'react';
-import { api } from '../utils/api';
-import { Save, Building2, FileText, Percent, CreditCard, Package, ShoppingCart, Users, Bot, MapPin } from 'lucide-react';
+import { api, BASE } from '../utils/api';
+import { Save, Building2, FileText, Percent, CreditCard, Package, ShoppingCart, Users, Bot, MapPin, Database, Download, UploadCloud, Trash2, Layout } from 'lucide-react';
 import InvoiceBuilder from '../components/InvoiceBuilder';
+import TemplateDesigner from '../components/TemplateDesigner';
+import { fmtDateTime } from '../utils/api';
 import toast from 'react-hot-toast';
 
 const TABS = [
   { id: 'business', label: 'Business Profile', icon: Building2 },
   { id: 'invoice', label: 'Invoice', icon: FileText },
-  { id: 'tax', label: 'Tax & VAT', icon: Percent },
   { id: 'payment', label: 'Payment', icon: CreditCard },
   { id: 'inventory', label: 'Inventory', icon: Package },
   { id: 'pos', label: 'POS', icon: ShoppingCart },
   { id: 'users', label: 'Users', icon: Users },
+  { id: 'backup', label: 'Data Backup', icon: Database },
+  { id: 'print_template', label: 'Print Template', icon: Layout },
   { id: 'ai', label: 'AI Assistant', icon: Bot },
 ];
 
@@ -75,23 +78,7 @@ function InvoiceTab({ settings, onChange }) {
   );
 }
 
-function TaxTab({ settings, onChange }) {
-  return (
-    <div className="grid grid-cols-2 gap-4">
-      <Toggle checked={settings.enable_vat === 'true'} onChange={v => onChange('enable_vat', String(v))} label="Enable VAT" />
-      <Toggle checked={settings.vat_inclusive === 'true'} onChange={v => onChange('vat_inclusive', String(v))} label="VAT Inclusive Pricing" />
-      <Field label="VAT Rate %"><input type="number" className="input-field" value={settings.vat_rate || '15'} onChange={e => onChange('vat_rate', e.target.value)} /></Field>
-      <Field label="VAT Label on Invoice"><input className="input-field" value={settings.vat_label || 'VAT @15%'} onChange={e => onChange('vat_label', e.target.value)} /></Field>
-      <Toggle checked={settings.vat_on_services === 'true'} onChange={v => onChange('vat_on_services', String(v))} label="VAT on Services" />
-      <Toggle checked={settings.vat_on_advance === 'true'} onChange={v => onChange('vat_on_advance', String(v))} label="VAT on Advance Payments" />
-      <Field label="Tax Period Start Month">
-        <select className="input-field" value={settings.tax_period_start || 'January'} onChange={e => onChange('tax_period_start', e.target.value)}>
-          {['January','February','March','April','May','June','July','August','September','October','November','December'].map(m => <option key={m} className="bg-surface-800">{m}</option>)}
-        </select>
-      </Field>
-    </div>
-  );
-}
+
 
 function PaymentTab({ settings, onChange }) {
   return (
@@ -148,12 +135,11 @@ function InventoryTab({ settings, onChange }) {
 function POSTab({ settings, onChange }) {
   return (
     <div className="grid grid-cols-2 gap-4">
-      <Toggle checked={settings.auto_apply_vat === 'true'} onChange={v => onChange('auto_apply_vat', String(v))} label="Auto Apply VAT" />
       <Toggle checked={settings.allow_below_cost === 'true'} onChange={v => onChange('allow_below_cost', String(v))} label="Allow Selling Below Cost" />
       <Toggle checked={settings.allow_negative_stock === 'true'} onChange={v => onChange('allow_negative_stock', String(v))} label="Allow Negative Stock" />
       <Toggle checked={settings.show_stock_qty === 'true'} onChange={v => onChange('show_stock_qty', String(v))} label="Show Stock in Search" />
       <Toggle checked={settings.show_product_image === 'true'} onChange={v => onChange('show_product_image', String(v))} label="Show Product Image" />
-      <Toggle checked={settings.allow_drafts === 'true'} onChange={v => onChange('allow_drafts', String(v))} label="Allow Draft Sales" />
+      <Toggle checked={settings.allow_drafts === 'true'} onChange={v => onChange('allow_drafts', String(v))} label="Allow Quotations in POS" />
       <Toggle checked={settings.auto_print === 'true'} onChange={v => onChange('auto_print', String(v))} label="Auto Print After Sale" />
       <Toggle checked={settings.require_customer_info === 'true'} onChange={v => onChange('require_customer_info', String(v))} label="Require Customer Info" />
       <Field label="Default Discount %"><input type="number" className="input-field" value={settings.default_discount || '0'} onChange={e => onChange('default_discount', e.target.value)} /></Field>
@@ -287,6 +273,109 @@ function UsersTab() {
   );
 }
 
+function BackupTab() {
+  const [backups, setBackups] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [creating, setCreating] = useState(false);
+  const [restoring, setRestoring] = useState(false);
+  const [confirmText, setConfirmText] = useState('');
+  const [selectedBackup, setSelectedBackup] = useState(null);
+
+  const load = async () => {
+    try { setLoading(true); const b = await api.get('/backup/list'); setBackups(b); }
+    catch { toast.error('Failed to load backups'); }
+    finally { setLoading(false); }
+  };
+  useEffect(() => { load(); }, []);
+
+  const handleCreate = async () => {
+    setCreating(true);
+    try { await api.post('/backup/create'); toast.success('Backup created successfully'); load(); }
+    catch (err) { toast.error(err.message); }
+    finally { setCreating(false); }
+  };
+
+  const handleDelete = async (id) => {
+    if (!confirm('Delete this backup?')) return;
+    try { await api.delete(`/backup/${id}`); toast.success('Deleted'); load(); }
+    catch (err) { toast.error(err.message); }
+  };
+
+  const handleRestore = async (e) => {
+    e.preventDefault();
+    if (confirmText !== 'RESTORE' || !selectedBackup) return;
+    setRestoring(true);
+    try { await api.post('/backup/restore', { filename: selectedBackup, confirm: confirmText }); toast.success('Database restored successfully'); setConfirmText(''); setSelectedBackup(null); load(); }
+    catch (err) { toast.error(err.message); }
+    finally { setRestoring(false); }
+  };
+
+  return (
+    <div className="space-y-6">
+      <div className="flex items-center justify-between bg-surface-800 p-4 rounded-xl border border-surface-700">
+        <div>
+          <h3 className="font-bold text-white">Manual Backup</h3>
+          <p className="text-xs text-surface-400 mt-1">Create an instant snapshot of your entire database.</p>
+        </div>
+        <button onClick={handleCreate} disabled={creating} className="btn-primary">
+          {creating ? <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" /> : <Database className="w-4 h-4" />}
+          {creating ? 'Creating...' : 'Backup Now'}
+        </button>
+      </div>
+
+      <div>
+        <h3 className="form-section-title">Backup History</h3>
+        <div className="table-container mt-2">
+          <table className="data-table">
+            <thead><tr><th>Date</th><th>Filename</th><th>Size</th><th>Created By</th><th>Actions</th></tr></thead>
+            <tbody>
+              {loading ? <tr><td colSpan={5} className="text-center">Loading...</td></tr> :
+              backups.map(b => (
+                <tr key={b.id}>
+                  <td><span className="text-xs">{fmtDateTime(b.created_at)}</span></td>
+                  <td><span className="font-mono text-xs text-brand-400">{b.filename}</span></td>
+                  <td><span className="font-mono text-xs">{(b.size_bytes / 1024 / 1024).toFixed(2)} MB</span></td>
+                  <td><span className="text-xs text-surface-400">{b.created_by_name || 'System'}</span></td>
+                  <td>
+                    <div className="flex gap-1">
+                      <a href={`${BASE}/backup/download/${b.filename}`} download target="_blank" className="btn-ghost btn-icon btn-sm"><Download className="w-3.5 h-3.5" /></a>
+                      <button onClick={() => handleDelete(b.id)} className="btn-danger btn-icon btn-sm"><Trash2 className="w-3.5 h-3.5" /></button>
+                    </div>
+                  </td>
+                </tr>
+              ))}
+              {!loading && !backups.length && <tr><td colSpan={5} className="text-center text-surface-500 py-8">No backups available</td></tr>}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div className="bg-red-500/10 border border-red-500/20 p-5 rounded-xl">
+        <h3 className="font-bold text-red-400 flex items-center gap-2"><UploadCloud className="w-4 h-4" /> Restore Database</h3>
+        <p className="text-xs text-surface-400 mt-1 mb-4">Warning: Restoring a backup will overwrite the current database. This action cannot be undone.</p>
+        <form onSubmit={handleRestore} className="grid grid-cols-3 gap-3 items-end">
+          <div className="col-span-1">
+            <label className="label">Select Backup File</label>
+            <select className="input-field text-xs" value={selectedBackup || ''} onChange={e => setSelectedBackup(e.target.value)} required>
+              <option value="">— Select a backup to restore —</option>
+              {backups.map(b => <option key={b.id} value={b.filename}>{b.filename}</option>)}
+            </select>
+          </div>
+          <div className="col-span-1">
+            <label className="label text-red-400">Type RESTORE to confirm</label>
+            <input className="input-field font-mono text-center" value={confirmText} onChange={e => setConfirmText(e.target.value)} required placeholder="RESTORE" />
+          </div>
+          <div className="col-span-1">
+            <button type="submit" disabled={restoring || confirmText !== 'RESTORE' || !selectedBackup} className="btn-danger w-full">
+              {restoring ? 'Restoring...' : 'Restore Database'}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+}
+
 export default function Settings() {
   const [activeTab, setActiveTab] = useState('business');
   const [settings, setSettings] = useState({});
@@ -318,11 +407,12 @@ export default function Settings() {
     switch (activeTab) {
       case 'business': return <BusinessTab settings={tabSettings} onChange={onTabChange} />;
       case 'invoice': return <InvoiceTab settings={tabSettings} onChange={onTabChange} />;
-      case 'tax': return <TaxTab settings={tabSettings} onChange={onTabChange} />;
       case 'payment': return <PaymentTab settings={tabSettings} onChange={onTabChange} />;
       case 'inventory': return <InventoryTab settings={tabSettings} onChange={onTabChange} />;
       case 'pos': return <POSTab settings={tabSettings} onChange={onTabChange} />;
       case 'users': return <UsersTab />;
+      case 'backup': return <BackupTab />;
+      case 'print_template': return <TemplateDesigner settings={tabSettings} onChange={onTabChange} />;
       case 'ai': return <AITab settings={tabSettings} onChange={onTabChange} />;
       default: return null;
     }
@@ -332,7 +422,7 @@ export default function Settings() {
     <div className="animate-fade-in">
       <div className="page-header">
         <div><h1 className="page-title">Settings</h1><p className="page-subtitle">Configure your business and application settings</p></div>
-        {activeTab !== 'users' && (
+        {activeTab !== 'users' && activeTab !== 'backup' && (
           <button onClick={save} disabled={saving} className="btn-primary">
             {saving ? <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" /> : <><Save className="w-4 h-4" /> Save Changes</>}
           </button>
